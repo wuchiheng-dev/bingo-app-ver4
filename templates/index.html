@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>賓果選號</title>
+</head>
+
+<body>
+
+<h2>🎯 賓果賓果選號</h2>
+
+<select id="count">
+  <option value="1">1個</option>
+  <option value="2">2個</option>
+  <option value="3">3個</option>
+  <option value="4">4個</option>
+  <option value="5">5個</option>
+  <option value="6">6個</option>
+  <option value="7">7個</option>
+  <option value="8">8個</option>
+  <option value="9">9個</option>
+  <option value="10">10個</option>
+</select>
+
+<br><br>
+
+<button onclick="pick()">產生號碼</button>
+
+<h3 id="result"></h3>
+
+<script>
+function pick() {
+
+    let count = document.getElementById("count").value;
+
+    fetch("/pick", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({count: count})
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("result").innerText =
+            "星期：" + data.weekday +
+            " | 號碼：" + data.numbers.join(", ");
+    })
+    .catch(err => {
+        alert("錯誤");
+        console.log(err);
+    });
+}
+</script>
+
+</body>
+</html>
