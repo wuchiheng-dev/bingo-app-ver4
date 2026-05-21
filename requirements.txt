@@ -2,4 +2,4 @@ flask
 gunicorn
 requests
 beautifulsoup4
-PYTHON_VERSION = 3.11.9
+
