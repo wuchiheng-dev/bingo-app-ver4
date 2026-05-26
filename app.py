@@ -19,6 +19,42 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
+# ✅ ✅ 新增：直接抓 Bingo API
+def fetch_bingo_api():
+    url = "https://api.taiwanlottery.com/TLCAPIWeB/WEBSERVICE/Lottery/Lottery_BingoResult.aspx"
+    
+    try:
+        data = _request(url, timeout=10)
+        text = _decode_bytes(data)
+        obj = json.loads(text)
+    except Exception as e:
+        _log(f"API request failed: {e}")
+        return []
+    
+    records = []
+    
+    # ✅ 解析資料（不同版本API用 content 或 result）
+    draws = obj.get("content") or obj.get("result") or []
+    
+    for item in draws:
+        # 嘗試找號碼欄位
+        raw = str(item)
+        
+        # 抓 1~80 數字
+        nums = re.findall(r"\b\d{1,2}\b", raw)
+        numbers = [int(n) for n in nums if 1 <= int(n) <= 80]
+        
+        if len(numbers) >= 20:
+            records.append({
+                "date": item.get("DrawTime", ""),
+                "period": item.get("DrawTerm", ""),
+                "numbers": numbers[:20],
+                "source": "api"
+            })
+    
+    return records
+
+
 app = Flask(__name__)
 
 APP_DIR = Path(__file__).resolve().parent
@@ -283,6 +319,10 @@ def choose_resource_rows(rows: List[Dict[str, str]], prefer_years: Optional[List
 
 def download_resource(item: Dict[str, Any], force: bool = False) -> Path:
     url = _clean_url(item["url"])
+
+    # ✅ ✅ 關鍵修改
+    if ".zip" in url.lower():
+        raise Exception("Render 環境跳過 ZIP 下載（避免卡住）")
     year = item.get("year") or "unknown"
     parsed = urllib.parse.urlparse(url)
     ext = Path(parsed.path).suffix.lower()
@@ -672,8 +712,36 @@ def parse_official_file(path: Path) -> List[Dict[str, Any]]:
             out.append(r)
     return out
 
+# ✅ ✅ Step 1：優先用官方 API（快速可靠）
+    try:
+        records = fetch_bingo_api()
+        if len(records) >= 100:
+            return {
+                "ok": True,
+                "from_cache": False,
+                "records": records[:1000],  # 限制筆數避免過大
+                "record_count": len(records),
+                "message": f"✅ 使用官方API資料，共 {len(records)} 筆"
+            }
+    except Exception as e:
+        _log(f"API fallback error: {e}")
 
 def sync_official_data(force: bool = False) -> Dict[str, Any]:
+
+# ✅ ✅ Step 3：如果已有 cache，直接用（避免重新抓官方）
+    if HISTORY_CACHE.exists() and not force:
+        try:
+            cache = json.loads(HISTORY_CACHE.read_text(encoding="utf-8"))
+            if cache.get("records"):
+                return {
+                    "ok": True,
+                    "from_cache": True,
+                    "records": cache["records"],
+                    "record_count": len(cache["records"]),
+                    "message": f"已載入快取資料 {len(cache['records'])} 筆",
+                }
+        except Exception:
+            pass
     """
     自動官方同步：
     1. 抓官方索引
@@ -2180,4 +2248,3 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
