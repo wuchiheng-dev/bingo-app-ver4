@@ -852,8 +852,35 @@ def _dedupe_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def get_data(force_sync: bool = False) -> List[List[int]]:
-    result = sync_official_data(force=force_sync)
-    return [r["numbers"] for r in result["records"]]
+    """
+    ✅ 完全改成用官方 API（不再用 ZIP / CSV）
+    """
+
+    url = "https://api.taiwanlottery.com/TLCAPIWeB/WEBSERVICE/Lottery/Lottery_BingoResult.aspx"
+
+    try:
+        data = _request(url, timeout=10)
+        text = _decode_bytes(data)
+        obj = json.loads(text)
+    except Exception as e:
+        _log(f"API失敗: {e}")
+        return []
+
+    results = []
+
+    draws = obj.get("content") or obj.get("result") or []
+
+    for item in draws:
+        raw = str(item)
+
+        nums = re.findall(r"\b\d{1,2}\b", raw)
+        numbers = [int(n) for n in nums if 1 <= int(n) <= 80]
+
+        if len(numbers) >= 20:
+            results.append(numbers[:20])
+
+    return results[:1000]  # 限制筆數，避免太慢
+
 
 
 def filter_weekday(data: List[List[int]]) -> List[List[int]]:
@@ -2074,35 +2101,21 @@ def update_check_route():
 
 @app.route("/sync", methods=["GET", "POST"])
 def sync_route():
-    force = request.args.get("force", "0") == "1"
     try:
-        result = sync_official_data(force=force)
-        # 頁面載入時 /data-status 可能剛同步過獎金表；
-        # 手動更新官方資料時不要立刻重抓第二次，除非沒有近期官方快取。
-        recent_payout = _recent_official_payout_payload(max_age_seconds=300)
-        if recent_payout:
-            global _PAYOUT_MEMORY
-            _PAYOUT_MEMORY = recent_payout
-            payout = get_payout_summary(force=False)
-        else:
-            payout = get_payout_summary(force=force)
+        data = get_data()
+
         return jsonify({
             "ok": True,
-            "message": result["message"],
-            "records": result["record_count"],
-            "from_cache": result["from_cache"],
-            "sources": [Path(s).name for s in result.get("sources", [])],
-            "updated_at": result.get("updated_at"),
-            "cached_year": get_local_cache_summary().get("cached_year"),
-            "payout": payout,
+            "message": f"✅ API資料取得成功，共 {len(data)} 筆",
+            "records": len(data),
+            "from_cache": False,
         })
     except Exception as e:
-        _log(f"同步失敗：{e}")
         return jsonify({
             "ok": False,
-            "message": f"官方資料同步解析失敗：{e}",
-            "hint": "請開 /debug 查看官方索引、下載檔案、解析記錄。若公司網路擋住 gaze.nta.gov.tw，會無法下載官方索引。",
+            "message": f"❌ API讀取失敗: {str(e)}"
         }), 500
+``	
 
 
 @app.route("/pick/start", methods=["POST"])
