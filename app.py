@@ -2115,7 +2115,6 @@ def sync_route():
             "ok": False,
             "message": f"❌ API讀取失敗: {str(e)}"
         }), 500
-``	
 
 
 @app.route("/pick/start", methods=["POST"])
