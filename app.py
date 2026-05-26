@@ -726,136 +726,25 @@ def parse_official_file(path: Path) -> List[Dict[str, Any]]:
     except Exception as e:
         _log(f"API fallback error: {e}")
 
-def sync_official_data(force: bool = False) -> Dict[str, Any]:
-
-# ✅ ✅ Step 3：如果已有 cache，直接用（避免重新抓官方）
-    if HISTORY_CACHE.exists() and not force:
-        try:
-            cache = json.loads(HISTORY_CACHE.read_text(encoding="utf-8"))
-            if cache.get("records"):
-                return {
-                    "ok": True,
-                    "from_cache": True,
-                    "records": cache["records"],
-                    "record_count": len(cache["records"]),
-                    "message": f"已載入快取資料 {len(cache['records'])} 筆",
-                }
-        except Exception:
-            pass
+def sync_official_data(force: bool = False):
     """
-    自動官方同步：
-    1. 抓官方索引
-    2. 下載年度資料
-    3. 解析 BINGO BINGO
-    4. 建立 history cache
+    ✅ 改成直接用 API（完全不跑 CSV / ZIP）
     """
-    if HISTORY_CACHE.exists() and not force:
-        try:
-            cache = json.loads(HISTORY_CACHE.read_text(encoding="utf-8"))
-            if cache.get("records"):
-                return {
-                    "ok": True,
-                    "from_cache": True,
-                    "records": cache["records"],
-                    "record_count": len(cache["records"]),
-                    "message": f"已載入快取資料 {len(cache['records'])} 筆",
-                    "sources": cache.get("sources", []),
-                    "resources": cache.get("resources", []),
-                    "updated_at": cache.get("updated_at"),
-                }
-        except Exception:
-            pass
-
-    last_errors = []
-    _log("官方開獎資料同步中...")
-    rows = fetch_official_resource_index(force=force)
-    candidates = choose_resource_rows(rows)
-    if not candidates:
-        raise RuntimeError("官方索引有下載，但找不到年度下載連結")
-
-    all_records = []
-    used_sources = []
-    used_resources = []
-
-    # 依序嘗試前幾個年度，抓到 Bingo 資料就停止；如果想跨年可改成繼續累加
-    for item in candidates[:6]:
-        try:
-            p = download_resource(item, force=force)
-            records = parse_official_file(p)
-            if records:
-                _log(f"官方開獎資料同步成功：{p.name}｜BINGO BINGO {len(records)} 筆")
-                all_records.extend(records)
-                used_sources.append(str(p))
-                used_resources.append({
-                    "year": item.get("year"),
-                    "url": _clean_url(item.get("url", "")),
-                    "file_name": item.get("file_name", ""),
-                    "cache_file": p.name,
-                    "size": p.stat().st_size if p.exists() else 0,
-                })
-                # 至少抓到 300 筆就夠回測，否則繼續抓上一年度補資料
-                if len(all_records) >= 300:
-                    break
-        except Exception as e:
-            last_errors.append(f"{item.get('year')}: {e}")
-            # 單一年度檔失敗屬於備援流程，避免主控台洗版；最後全部失敗才彙總。
-
-    if not all_records:
-        if last_errors:
-            _log("官方開獎資料同步失敗，原因彙總：" + " | ".join(last_errors[-5:]))
-        raise RuntimeError("官方資料下載成功但解析不到 BINGO BINGO。可能是官方檔案格式改版，或公司網路回傳阻擋頁。" + (" | ".join(last_errors)))
-
-    # 依日期/期別簡單排序；排序失敗不影響
-    all_records = _dedupe_records(all_records)
-    payload = {
-        "updated_at": _dt.datetime.now().isoformat(timespec="seconds"),
-        "records": all_records,
-        "sources": used_sources,
-        "resources": used_resources,
-    }
-    try:
-        OFFICIAL_STATE_CACHE.write_text(json.dumps({
-            "updated_at": payload["updated_at"],
-            "record_count": len(all_records),
-            "resources": used_resources,
-            "sources": used_sources,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-    HISTORY_CACHE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    data = get_data()
 
     return {
         "ok": True,
         "from_cache": False,
-        "records": all_records,
-        "record_count": len(all_records),
-        "message": f"官方同步完成，解析 BINGO BINGO {len(all_records)} 筆",
-        "sources": used_sources,
-        "resources": used_resources,
-        "updated_at": payload["updated_at"],
+        "records": [{"numbers": d} for d in data],
+        "record_count": len(data),
+        "message": f"✅ API資料已載入，共 {len(data)} 筆"
     }
 
 
-def _dedupe_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen = set()
-    out = []
-    for r in records:
-        nums = r.get("numbers") or []
-        if len(nums) < 20:
-            continue
-        key = (r.get("period") or "", r.get("date") or "", tuple(nums))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({"date": r.get("date", ""), "period": r.get("period", ""), "numbers": nums[:20], "source": r.get("source", "")})
-    return out
-
-
-def get_data(force_sync: bool = False) -> List[List[int]]:
+def get_data(force_sync: bool = False):
     """
-    ✅ 完全改成用官方 API（不再用 ZIP / CSV）
+    ✅ 直接抓 Bingo 開獎 API
     """
-
     url = "https://api.taiwanlottery.com/TLCAPIWeB/WEBSERVICE/Lottery/Lottery_BingoResult.aspx"
 
     try:
@@ -879,8 +768,7 @@ def get_data(force_sync: bool = False) -> List[List[int]]:
         if len(numbers) >= 20:
             results.append(numbers[:20])
 
-    return results[:1000]  # 限制筆數，避免太慢
-
+    return results[:500]  # ✅ 限制500筆，加快速度
 
 
 def filter_weekday(data: List[List[int]]) -> List[List[int]]:
@@ -2115,6 +2003,7 @@ def sync_route():
             "ok": False,
             "message": f"❌ API讀取失敗: {str(e)}"
         }), 500
+	
 
 
 @app.route("/pick/start", methods=["POST"])
